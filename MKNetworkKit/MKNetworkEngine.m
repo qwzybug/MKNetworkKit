@@ -59,13 +59,6 @@
 @property (assign, nonatomic) dispatch_queue_t operationQueue;
 #endif
 
--(void) saveCache;
--(void) saveCacheData:(NSData*) data forKey:(NSString*) cacheDataKey;
-
--(void) freezeOperations;
--(void) checkAndRestoreFrozenOperations;
-
--(BOOL) isCacheEnabled;
 @end
 
 static NSOperationQueue *_sharedNetworkQueue;
@@ -414,6 +407,8 @@ static NSOperationQueue *_sharedNetworkQueue;
 -(void) enqueueOperation:(MKNetworkOperation*) operation forceReload:(BOOL) forceReload {
   
   NSParameterAssert(operation != nil);
+  if(operation == nil) return;
+  
   dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     [operation setCacheHandler:^(MKNetworkOperation* completedCacheableOperation) {
       
@@ -451,7 +446,10 @@ static NSOperationQueue *_sharedNetworkQueue;
               expiryTimeInSeconds = [expiresOnDate timeIntervalSinceNow];
             });
             
-            [operation updateOperationBasedOnPreviousHeaders:savedCacheHeaders];
+            dispatch_async(dispatch_get_main_queue(), ^{
+              
+              [operation updateOperationBasedOnPreviousHeaders:savedCacheHeaders];
+            });
           }
         }
       }
@@ -465,8 +463,11 @@ static NSOperationQueue *_sharedNetworkQueue;
           
           MKNetworkOperation *queuedOperation = (MKNetworkOperation*) (operations)[index];
           operationFinished = [queuedOperation isFinished];
-          if(!operationFinished)
-            [queuedOperation updateHandlersFromOperation:operation];
+          if(!operationFinished) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [queuedOperation updateHandlersFromOperation:operation];
+            });
+          }
         }
         
         if(expiryTimeInSeconds <= 0 || forceReload || operationFinished)
@@ -536,15 +537,15 @@ static NSOperationQueue *_sharedNetworkQueue;
   [op addCompletionHandler:^(MKNetworkOperation *completedOperation) {
     [completedOperation decompressedResponseImageOfSize:size
                                       completionHandler:^(UIImage *decompressedImage) {
-                                        
-                                        imageFetchedBlock(decompressedImage,
-                                                          url,
-                                                          [completedOperation isCachedResponse]);
+                                          if (imageFetchedBlock)
+                                              imageFetchedBlock(decompressedImage,
+                                                                url,
+                                                                [completedOperation isCachedResponse]);
                                       }];
   } errorHandler:^(MKNetworkOperation *completedOperation, NSError *error) {
-    
-    errorBlock(completedOperation, error);
-    DLog(@"%@", error);
+      if (errorBlock)
+          errorBlock(completedOperation, error);
+      DLog(@"%@", error);
   }];
   
   [self enqueueOperation:op];
